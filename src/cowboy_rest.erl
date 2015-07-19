@@ -19,13 +19,15 @@
 
 -export([upgrade/4]).
 
+-type handler_value() :: {value, any()} | {delay, fun(() -> any())} | {delay, [atom()], any()}.
+
 -record(state, {
 	env :: cowboy_middleware:env(),
 	method = undefined :: binary(),
 
 	%% Handler.
 	handler :: atom(),
-	handler_state :: any(),
+	handler_values = [] :: [{atom(), handler_value()}],
 
 	%% Allowed methods. Only used for OPTIONS requests.
 	allowed_methods :: [binary()],
@@ -62,9 +64,9 @@ upgrade(Req, Env, Handler, HandlerOpts) ->
 	case erlang:function_exported(Handler, rest_init, 2) of
 		true ->
 			try Handler:rest_init(Req, HandlerOpts) of
-				{ok, Req2, HandlerState} ->
+				{ok, Req2, HandlerValues} ->
 					service_available(Req2, #state{env=Env, method=Method,
-						handler=Handler, handler_state=HandlerState})
+						handler=Handler, handler_values=HandlerValues})
 			catch Class:Reason ->
 				Stacktrace = erlang:get_stacktrace(),
 				cowboy_req:maybe_reply(Stacktrace, Req),
@@ -957,12 +959,15 @@ expect(Req, State, Callback, Expected, OnTrue, OnFalse) ->
 			next(Req2, State2, OnFalse)
 	end.
 
-call(Req, State=#state{handler=Handler, handler_state=HandlerState},
-		Callback) ->
-	case erlang:function_exported(Handler, Callback, 2) of
+
+-spec call(Req, #state{}, Callback :: atom()) -> no_call |
+                                                 {halt, Req, State} |
+                                                 {any(), Req, State}.
+call(Req, State=#state{handler=Handler}, Callback) ->
+	case erlang:function_exported(Handler, Callback, 1) of
 		true ->
-			try
-				Handler:Callback(Req, HandlerState)
+			try 
+                                process_callback_result(Handler:Callback(Req), State)
 			catch Class:Reason ->
 				error_terminate(Req, State, Class, Reason, Callback)
 			end;
@@ -970,12 +975,41 @@ call(Req, State=#state{handler=Handler, handler_state=HandlerState},
 			no_call
 	end.
 
-unsafe_call(Req, #state{handler=Handler, handler_state=HandlerState},
-		Callback) ->
-	case erlang:function_exported(Handler, Callback, 2) of
-		true -> Handler:Callback(Req, HandlerState);
+unsafe_call(Req, State = #state{handler=Handler}, Callback) ->
+	case erlang:function_exported(Handler, Callback, 1) of
+		true -> process_callback_result(Handler:Callback(Req), State);
 		false -> no_call
 	end.
+
+
+process_callback_result({Result, Req}, State) ->
+    {Result, Req, State};
+
+process_callback_result({KeyList, Req, ResultFun},
+                        State=#state{handler_values=HandlerValues}) ->
+    {Result, NewHandlerValues} = force_fun(KeyList, ResultFun, HandlerValues),
+    {Result, Req, State#state{handler_values=NewHandlerValues}}.
+
+
+force_fun(KeyList, ResultFun, HandlerValues) ->
+    {Values, NewHandlerValues} = lists:mapfoldl(fun get_value/2, HandlerValues, KeyList),
+    {erlang:apply(ResultFun, Values), NewHandlerValues}.
+
+
+get_value(Key, HandlerValues) ->
+    case lists:keyfind(Key, 1, HandlerValues) of
+        {_, Value} ->
+            {Value, HandlerValues};
+
+        {_, KeyList, ResultFun} ->
+            {Value, NewHandlerValues} = force_fun(KeyList, ResultFun,
+                                                  lists:keydelete(Key, 1, HandlerValues)),
+            {Value, [{Key, Value} | NewHandlerValues]};
+
+        _ ->
+            throw({notfound, Key, HandlerValues})
+    end.
+
 
 next(Req, State, Next) when is_function(Next) ->
 	Next(Req, State);
@@ -990,7 +1024,7 @@ terminate(Req, State=#state{env=Env}) ->
 	rest_terminate(Req, State),
 	{ok, Req, [{result, ok}|Env]}.
 
-error_terminate(Req, State=#state{handler=Handler, handler_state=HandlerState},
+error_terminate(Req, State=#state{handler=Handler, handler_values=HandlerValues},
 		Class, Reason, Callback) ->
 	Stacktrace = erlang:get_stacktrace(),
 	rest_terminate(Req, State),
@@ -1000,12 +1034,11 @@ error_terminate(Req, State=#state{handler=Handler, handler_state=HandlerState},
 		{mfa, {Handler, Callback, 2}},
 		{stacktrace, Stacktrace},
 		{req, cowboy_req:to_list(Req)},
-		{state, HandlerState}
+		{values, HandlerValues}
 	]).
 
-rest_terminate(Req, #state{handler=Handler, handler_state=HandlerState}) ->
-	case erlang:function_exported(Handler, rest_terminate, 2) of
-		true -> ok = Handler:rest_terminate(
-			cowboy_req:lock(Req), HandlerState);
+rest_terminate(_Req, #state{handler=Handler}) ->
+	case erlang:function_exported(Handler, rest_terminate, 0) of
+		true -> ok = Handler:rest_terminate();
 		false -> ok
 	end.
