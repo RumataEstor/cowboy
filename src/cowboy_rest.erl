@@ -94,10 +94,9 @@ known_methods(Req, State=#state{method=Method}) ->
 			next(Req, State, fun uri_too_long/2);
 		no_call ->
 			next(Req, State, 501);
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
-		{List, Req2, HandlerState} ->
-			State2 = State#state{handler_state=HandlerState},
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{List, Req2, State2} ->
 			case lists:member(Method, List) of
 				true -> next(Req2, State2, fun uri_too_long/2);
 				false -> next(Req2, State2, 501)
@@ -119,10 +118,9 @@ allowed_methods(Req, State=#state{method=Method}) ->
 		no_call ->
 			method_not_allowed(Req, State,
 				[<<"HEAD">>, <<"GET">>, <<"OPTIONS">>]);
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
-		{List, Req2, HandlerState} ->
-			State2 = State#state{handler_state=HandlerState},
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{List, Req2, State2} ->
 			case lists:member(Method, List) of
 				true when Method =:= <<"OPTIONS">> ->
 					next(Req2, State2#state{allowed_methods=List},
@@ -150,14 +148,14 @@ is_authorized(Req, State) ->
 	case call(Req, State, is_authorized) of
 		no_call ->
 			forbidden(Req, State);
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
-		{true, Req2, HandlerState} ->
-			forbidden(Req2, State#state{handler_state=HandlerState});
-		{{false, AuthHead}, Req2, HandlerState} ->
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{true, Req2, State2} ->
+			forbidden(Req2, State2);
+		{{false, AuthHead}, Req2, State2} ->
 			Req3 = cowboy_req:set_resp_header(
 				<<"www-authenticate">>, AuthHead, Req2),
-			respond(Req3, State#state{handler_state=HandlerState}, 401)
+			respond(Req3, State2, 401)
 	end.
 
 forbidden(Req, State) ->
@@ -186,10 +184,10 @@ options(Req, State=#state{allowed_methods=Methods, method= <<"OPTIONS">>}) ->
 				= << << ", ", M/binary >> || M <- Methods >>,
 			Req2 = cowboy_req:set_resp_header(<<"allow">>, Allow, Req),
 			respond(Req2, State, 200);
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
-		{ok, Req2, HandlerState} ->
-			respond(Req2, State#state{handler_state=HandlerState}, 200)
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{ok, Req2, State2} ->
+			respond(Req2, State2, 200)
 	end;
 options(Req, State) ->
 	content_types_provided(Req, State).
@@ -226,14 +224,13 @@ content_types_provided(Req, State) ->
 					Accept2 = prioritize_accept(Accept),
 					choose_media_type(Req2, State2, Accept2)
 			end;
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
-		{[], Req2, HandlerState} ->
-			not_acceptable(Req2, State#state{handler_state=HandlerState});
-		{CTP, Req2, HandlerState} ->
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{[], Req2, State2} ->
+			not_acceptable(Req2, State2);
+		{CTP, Req2, State1} ->
 			CTP2 = [normalize_content_types(P) || P <- CTP],
-			State2 = State#state{
-				handler_state=HandlerState, content_types_p=CTP2},
+			State2 = State1#state{content_types_p=CTP2},
 			case cowboy_req:parse_header(<<"accept">>, Req2) of
 				{error, badarg} ->
 					respond(Req2, State2, 400);
@@ -329,12 +326,12 @@ languages_provided(Req, State) ->
 	case call(Req, State, languages_provided) of
 		no_call ->
 			charsets_provided(Req, State);
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
-		{[], Req2, HandlerState} ->
-			not_acceptable(Req2, State#state{handler_state=HandlerState});
-		{LP, Req2, HandlerState} ->
-			State2 = State#state{handler_state=HandlerState, languages_p=LP},
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{[], Req2, State2} ->
+			not_acceptable(Req2, State2);
+		{LP, Req2, State1} ->
+			State2 = State1#state{languages_p=LP},
 			{ok, AcceptLanguage, Req3} =
 				cowboy_req:parse_header(<<"accept-language">>, Req2),
 			case AcceptLanguage of
@@ -391,12 +388,12 @@ charsets_provided(Req, State) ->
 	case call(Req, State, charsets_provided) of
 		no_call ->
 			set_content_type(Req, State);
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
-		{[], Req2, HandlerState} ->
-			not_acceptable(Req2, State#state{handler_state=HandlerState});
-		{CP, Req2, HandlerState} ->
-			State2 = State#state{handler_state=HandlerState, charsets_p=CP},
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{[], Req2, State2} ->
+			not_acceptable(Req2, State2);
+		{CP, Req2, State1} ->
+			State2 = State1#state{charsets_p=CP},
 			{ok, AcceptCharset, Req3} =
 				cowboy_req:parse_header(<<"accept-charset">>, Req2),
 			case AcceptCharset of
@@ -512,9 +509,8 @@ variances(Req, State, Variances) ->
 	case unsafe_call(Req, State, variances) of
 		no_call ->
 			{Variances, Req, State};
-		{HandlerVariances, Req2, HandlerState} ->
-			{Variances ++ HandlerVariances, Req2,
-				State#state{handler_state=HandlerState}}
+		{HandlerVariances, Req2, State2} ->
+			{Variances ++ HandlerVariances, Req2, State2}
 	end.
 
 resource_exists(Req, State) ->
@@ -663,14 +659,14 @@ is_put_to_missing_resource(Req, State) ->
 %% with Location the full new URI of the resource.
 moved_permanently(Req, State, OnFalse) ->
 	case call(Req, State, moved_permanently) of
-		{{true, Location}, Req2, HandlerState} ->
+		{{true, Location}, Req2, State2} ->
 			Req3 = cowboy_req:set_resp_header(
 				<<"location">>, Location, Req2),
-			respond(Req3, State#state{handler_state=HandlerState}, 301);
-		{false, Req2, HandlerState} ->
-			OnFalse(Req2, State#state{handler_state=HandlerState});
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
+			respond(Req3, State2, 301);
+		{false, Req2, State2} ->
+			OnFalse(Req2, State2);
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
 		no_call ->
 			OnFalse(Req, State)
 	end.
@@ -684,14 +680,14 @@ previously_existed(Req, State) ->
 %% with Location the full new URI of the resource.
 moved_temporarily(Req, State) ->
 	case call(Req, State, moved_temporarily) of
-		{{true, Location}, Req2, HandlerState} ->
+		{{true, Location}, Req2, State2} ->
 			Req3 = cowboy_req:set_resp_header(
 				<<"location">>, Location, Req2),
-			respond(Req3, State#state{handler_state=HandlerState}, 307);
-		{false, Req2, HandlerState} ->
-			is_post_to_missing_resource(Req2, State#state{handler_state=HandlerState}, 410);
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
+			respond(Req3, State2, 307);
+		{false, Req2, State2} ->
+			is_post_to_missing_resource(Req2, State2, 410);
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
 		no_call ->
 			is_post_to_missing_resource(Req, State, 410)
 	end.
@@ -740,11 +736,10 @@ accept_resource(Req, State) ->
 	case call(Req, State, content_types_accepted) of
 		no_call ->
 			respond(Req, State, 415);
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
-		{CTA, Req2, HandlerState} ->
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{CTA, Req2, State2} ->
 			CTA2 = [normalize_content_types(P) || P <- CTA],
-			State2 = State#state{handler_state=HandlerState},
 			case cowboy_req:parse_header(<<"content-type">>, Req2) of
 				{ok, ContentType, Req3} ->
 					choose_content_type(Req3, State2, ContentType, CTA2);
@@ -775,19 +770,15 @@ choose_content_type(Req, State, ContentType, [_Any|Tail]) ->
 
 process_content_type(Req, State=#state{method=Method, exists=Exists}, Fun) ->
 	try case call(Req, State, Fun) of
-		{halt, Req2, HandlerState2} ->
-			terminate(Req2, State#state{handler_state=HandlerState2});
-		{true, Req2, HandlerState2} when Exists ->
-			State2 = State#state{handler_state=HandlerState2},
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{true, Req2, State2} when Exists ->
 			next(Req2, State2, fun has_resp_body/2);
-		{true, Req2, HandlerState2} ->
-			State2 = State#state{handler_state=HandlerState2},
+		{true, Req2, State2} ->
 			next(Req2, State2, fun maybe_created/2);
-		{false, Req2, HandlerState2} ->
-			State2 = State#state{handler_state=HandlerState2},
+		{false, Req2, State2} ->
 			respond(Req2, State2, 400);
-		{{true, ResURL}, Req2, HandlerState2} when Method =:= <<"POST">> ->
-			State2 = State#state{handler_state=HandlerState2},
+		{{true, ResURL}, Req2, State2} when Method =:= <<"POST">> ->
 			Req3 = cowboy_req:set_resp_header(
 				<<"location">>, ResURL, Req2),
 			if
@@ -856,10 +847,9 @@ set_resp_body_expires(Req, State) ->
 %% it to the response.
 set_resp_body(Req, State=#state{content_type_a={_, Callback}}) ->
 	try case call(Req, State, Callback) of
-		{halt, Req2, HandlerState2} ->
-			terminate(Req2, State#state{handler_state=HandlerState2});
-		{Body, Req2, HandlerState2} ->
-			State2 = State#state{handler_state=HandlerState2},
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{Body, Req2, State2} ->
 			Req3 = case Body of
 				{stream, StreamFun} ->
 					cowboy_req:set_resp_body_fun(StreamFun, Req2);
@@ -919,11 +909,11 @@ generate_etag(Req, State=#state{etag=undefined}) ->
 	case unsafe_call(Req, State, generate_etag) of
 		no_call ->
 			{undefined, Req, State#state{etag=no_call}};
-		{Etag, Req2, HandlerState} when is_binary(Etag) ->
+		{Etag, Req2, State2} when is_binary(Etag) ->
 			[Etag2] = cowboy_http:entity_tag_match(Etag),
-			{Etag2, Req2, State#state{handler_state=HandlerState, etag=Etag2}};
-		{Etag, Req2, HandlerState} ->
-			{Etag, Req2, State#state{handler_state=HandlerState, etag=Etag}}
+			{Etag2, Req2, State2#state{etag=Etag2}};
+		{Etag, Req2, State2} ->
+			{Etag, Req2, State2#state{etag=Etag}}
 	end;
 generate_etag(Req, State=#state{etag=Etag}) ->
 	{Etag, Req, State}.
@@ -934,8 +924,8 @@ last_modified(Req, State=#state{last_modified=undefined}) ->
 	case unsafe_call(Req, State, last_modified) of
 		no_call ->
 			{undefined, Req, State#state{last_modified=no_call}};
-		{LastModified, Req2, HandlerState} ->
-			{LastModified, Req2, State#state{handler_state=HandlerState,
+		{LastModified, Req2, State2} ->
+			{LastModified, Req2, State2#state{
 				last_modified=LastModified}}
 	end;
 last_modified(Req, State=#state{last_modified=LastModified}) ->
@@ -947,9 +937,8 @@ expires(Req, State=#state{expires=undefined}) ->
 	case unsafe_call(Req, State, expires) of
 		no_call ->
 			{undefined, Req, State#state{expires=no_call}};
-		{Expires, Req2, HandlerState} ->
-			{Expires, Req2, State#state{handler_state=HandlerState,
-				expires=Expires}}
+		{Expires, Req2, State2} ->
+			{Expires, Req2, State2#state{expires=Expires}}
 	end;
 expires(Req, State=#state{expires=Expires}) ->
 	{Expires, Req, State}.
@@ -960,12 +949,12 @@ expect(Req, State, Callback, Expected, OnTrue, OnFalse) ->
 	case call(Req, State, Callback) of
 		no_call ->
 			next(Req, State, OnTrue);
-		{halt, Req2, HandlerState} ->
-			terminate(Req2, State#state{handler_state=HandlerState});
-		{Expected, Req2, HandlerState} ->
-			next(Req2, State#state{handler_state=HandlerState}, OnTrue);
-		{_Unexpected, Req2, HandlerState} ->
-			next(Req2, State#state{handler_state=HandlerState}, OnFalse)
+		{halt, Req2, State2} ->
+			terminate(Req2, State2);
+		{Expected, Req2, State2} ->
+			next(Req2, State2, OnTrue);
+		{_Unexpected, Req2, State2} ->
+			next(Req2, State2, OnFalse)
 	end.
 
 call(Req, State=#state{handler=Handler, handler_state=HandlerState},
