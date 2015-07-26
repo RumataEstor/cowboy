@@ -50,8 +50,7 @@
 	exists = false :: boolean(),
 
 	%% Cached resource calls.
-	etag :: undefined | no_call | {strong | weak, binary()},
-	last_modified :: undefined | no_call | calendar:datetime()
+	etag :: undefined | no_call | {strong | weak, binary()}
 }).
 
 -spec upgrade(Req, Env, module(), any())
@@ -917,19 +916,14 @@ generate_etag(Req, State=#state{etag=undefined}) ->
 generate_etag(Req, State=#state{etag=Etag}) ->
 	{Etag, Req, State}.
 
-last_modified(Req, State=#state{last_modified=no_call}) ->
-	{undefined, Req, State};
-last_modified(Req, State=#state{last_modified=undefined}) ->
+
+last_modified(Req, State) ->
 	case unsafe_call(Req, State, last_modified) of
 		no_call ->
-			{undefined, Req, State#state{last_modified=no_call}};
+			{undefined, Req, State};
 		{LastModified, Req2, State2} ->
-			{LastModified, Req2, State2#state{
-				last_modified=LastModified}}
-	end;
-last_modified(Req, State=#state{last_modified=LastModified}) ->
-	{LastModified, Req, State}.
-
+			{LastModified, Req2, State2}
+	end.
 
 expires(Req, State) ->
 	case unsafe_call(Req, State, expires) of
