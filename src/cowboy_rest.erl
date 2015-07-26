@@ -47,10 +47,7 @@
 	charset_a :: undefined | binary(),
 
 	%% Whether the resource exists.
-	exists = false :: boolean(),
-
-	%% Cached resource calls.
-	etag :: undefined | no_call | {strong | weak, binary()}
+	exists = false :: boolean()
 }).
 
 -spec upgrade(Req, Env, module(), any())
@@ -901,20 +898,16 @@ set_resp_expires(Req, State) ->
 
 %% Info retrieval. No logic.
 
-generate_etag(Req, State=#state{etag=no_call}) ->
-	{undefined, Req, State};
-generate_etag(Req, State=#state{etag=undefined}) ->
+generate_etag(Req, State) ->
 	case unsafe_call(Req, State, generate_etag) of
 		no_call ->
-			{undefined, Req, State#state{etag=no_call}};
+			{undefined, Req, State};
 		{Etag, Req2, State2} when is_binary(Etag) ->
 			[Etag2] = cowboy_http:entity_tag_match(Etag),
-			{Etag2, Req2, State2#state{etag=Etag2}};
+			{Etag2, Req2, State2};
 		{Etag, Req2, State2} ->
-			{Etag, Req2, State2#state{etag=Etag}}
-	end;
-generate_etag(Req, State=#state{etag=Etag}) ->
-	{Etag, Req, State}.
+			{Etag, Req2, State2}
+	end.
 
 
 last_modified(Req, State) ->
