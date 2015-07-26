@@ -51,8 +51,7 @@
 
 	%% Cached resource calls.
 	etag :: undefined | no_call | {strong | weak, binary()},
-	last_modified :: undefined | no_call | calendar:datetime(),
-	expires :: undefined | no_call | calendar:datetime() | binary()
+	last_modified :: undefined | no_call | calendar:datetime()
 }).
 
 -spec upgrade(Req, Env, module(), any())
@@ -931,17 +930,14 @@ last_modified(Req, State=#state{last_modified=undefined}) ->
 last_modified(Req, State=#state{last_modified=LastModified}) ->
 	{LastModified, Req, State}.
 
-expires(Req, State=#state{expires=no_call}) ->
-	{undefined, Req, State};
-expires(Req, State=#state{expires=undefined}) ->
+
+expires(Req, State) ->
 	case unsafe_call(Req, State, expires) of
 		no_call ->
-			{undefined, Req, State#state{expires=no_call}};
+			{undefined, Req, State};
 		{Expires, Req2, State2} ->
-			{Expires, Req2, State2#state{expires=Expires}}
-	end;
-expires(Req, State=#state{expires=Expires}) ->
-	{Expires, Req, State}.
+			{Expires, Req2, State2}
+	end.
 
 %% REST primitives.
 
